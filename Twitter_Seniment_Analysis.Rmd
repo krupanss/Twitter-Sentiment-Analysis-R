@@ -1,0 +1,521 @@
+---
+title: "Brand perception through sentiment analysis"
+author: "Sai Krupan Seela"
+output: html_document
+---
+ 
+### Objective: Brand perception through Sentiment Analysis
+#### Steps to achieve: 
+   1. Establish twitter api connection through R
+   2. Extract tweets from Twitter feed for a brand
+   3. Data Cleansing 
+   4. Corpus Creation
+   5. Term Document Matrix and Word Cloud
+   6. Correlations and HeatMaps
+   7. Association and Topic Modelling
+   8. Sentiment Analysis
+   9. Stream Graph
+
+```{r message = FALSE, warning=FALSE}
+rm(list=ls())
+library(twitteR)
+library(ROAuth)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(httr)
+library(wordcloud)
+library(sentiment)
+library(RCurl)
+library(plyr)
+library(SnowballC)
+library(tm)
+library(RColorBrewer)
+library(topicmodels)
+library(data.table)
+library(stringi)
+library(qdap)
+library(streamgraph)
+library(tidytext)
+library(gridExtra)
+library(beepr)
+library(png)
+```
+
+
+#### Step 1: Establish twitter api connection through R
+
+To establish connection to twitter API, we'll use OAuthFactory function and twitter Application credentials. 
+Once creating a new conncection we can save the credentials in a file and just load the credentials file whenever we need a 
+connection to twitter instead of running all the code. I've downloaded the tweets and saved in a csv file and loaded the file for analysis. Code to extract the tweets is given below with in comments, ofcourse with masked credentials.
+
+##### Code for connecting to Twitter API 
+
+```{r message = FALSE, warning=FALSE}
+
+# oauth_endpoint(authorize = 'https://api.twitter.com/oauth',
+#                access = 'https://api.twitter.com/oauth/access_token')
+# 
+# ##Connect to API 
+# ##Connection strings
+# download.file(url = 'http://curl.haxx.se/ca/cacert.pem', destfile = 'cacert.pem')
+# reqURL = 'https://api.twitter.com/oauth/request_token'
+# accessURL = 'https://api.twitter.com/oauth/access_token'
+# authURL = 'https://api.twitter.com/oauth/authorize'
+
+##Twitter Application credentials
+# consumerKey = '*************************'
+# consumerSecret = '**************************************************'
+# accessToken	= '**********-***************************************'
+# accessTokenSecret = '**********-**********************************'
+# 
+# 
+# Cred = OAuthFactory$new(consumerKey = consumerKey,
+#                         consumerSecret = consumerSecret,
+#                         requestURL = reqURL,
+#                         accessURL = accessURL,
+#                         authURL = authURL)
+# 
+# Cred$handshake(cainfo = system.file('CurlSSL', 'cacert.pem', package = 'RCurl'))
+
+# save(Cred, file = 'twitter_authentication.Rdata')
+# load('twitter_authentication.Rdata')
+
+##Twitter setup
+
+# setup_twitter_oauth(consumer_key = consumerKey, consumer_secret = consumerSecret,
+#                     access_token = accessToken, access_secret = accessTokenSecret)
+```
+
+#### Step 2: Extract tweets from Twitter feed for a brand
+
+After establishing a connection to twitter API, we'll extract tweets for a brand. I chose "Infosys" as our brand and picked the date range from 10th October 2016 which is 4 days before Q2 results announcement to 19th October 2016 which is 5 days after the results announcement. I chose this range to analyse the sentiment in tweeples on the estimation of results before announcement and opinion on the results after announcement.
+
+As mentioned in the first step, I already downloaded the tweets, saved in csv file. Hence code to extract the tweets is commented.
+ 
+ 
+##### Extract tweets from twitter API and save to csv file.
+```{r message = FALSE, warning=FALSE}
+#tweets = searchTwitter(searchString = "infosys",n = 5000, lang = 'en', since = '2016-10-10', until = '2016-10-19')
+ 
+# tweets.length = length(tweets)
+# tweets.length 
+# tweets.df = ldply(tweets, function(t) t$toDataFrame())
+# View(tweets.df)
+ 
+#Save Tweets to csv file
+# write.csv(tweets.df, 'infosys.csv')
+
+```
+
+##### Read tweets from csv 
+```{r message = FALSE, warning=FALSE}
+# Read data from csv
+tweets.df = read.csv("infosys.csv", header = TRUE, stringsAsFactors=FALSE, encoding = "ANSII")
+ 
+# Convert data to data frame
+tweets.df = as.data.frame(tweets.df)
+
+# Convert ID to character which is in sceintific notation.
+tweets.df$id = as.character(tweets.df$id)
+
+# Convert Created to Date which is in date time format. 
+tweets.df$created = as.Date(tweets.df$created)
+
+#Check structure of data frame
+str(tweets.df)
+
+#Check Minimum Tweeted Date and Maximum Tweeted Date
+tweets.df %>%  group_by(1) %>%  summarise(max = max(created), min = min(created))
+```
+
+
+#### Step 3: Data Cleansing
+
+Once extraction of tweets is done, we come to the important step of data Cleansing and Corpus creation.
+This step is critical as it can make or break your data on which your modelling depends. 
+Improper data cleansing can provide incorrect insights in sentimental analysis.
+
+Here is the order of cleaning tweets text.
+1. First step in this is to remove URLS as it might get difficult to remove URLs after removing punctuation, numbers etc, as it disturbs the url text which prevents removing URLS. 
+2. We'll remove strings between "<" and ">". This is to remove smileys and other encoded text. 
+3. Remove retweet entities like @RT etc..
+4. Remove quotes and apostrophe like India's, 'Guidance' etc..
+5. Remove @people text. Ex: @Infosys
+6. Remove punctuation. This removes basic english punctuation.
+7. Remove single letters like 's', 'a'
+8. Remove unnecessary spaces.
+9. Remove leading and trailing white spaces. 
+
+Once tweets text is cleaned, we'll save the data frame in to a csv file as a backup for cleaned data.
+
+```{r message = FALSE, warning=FALSE}
+# Taking backup in to new column before text cleansing
+tweets.df$OriginalText = tweets.df$text
+
+# Remove URLs
+tweets.df$text = gsub("http[^[:space:]]*", "",tweets.df$text)
+
+# Remove character string between < > to remove smiley and other encodings
+tweets.df$text <- genX(tweets.df$text, " <", ">")
+
+# Remove retweet entities 
+tweets.df$text = gsub("(RT|via)((?:\\b\\W*@\\w+)+)"," ",tweets.df$text)
+
+# Remove quotes
+tweets.df$text = gsub("'s|'s|[...]", "", tweets.df$text)
+
+# Remove at people 
+tweets.df$text = gsub("@\\w+", " ", tweets.df$text)
+# Remove punctuation 
+tweets.df$text = gsub("[[:punct:]]", " ", tweets.df$text)
+
+# Remove single letters.
+tweets.df$text = gsub(" *\\b[[:alpha:]]{1}\\b *", "", tweets.df$text)
+
+# Remove unnecessary spaces
+tweets.df$text = gsub("[ \t]{2,}", " ", tweets.df$text)
+
+# Remove leading and trailing whitespaces 
+tweets.df$text = gsub("^\\s+|\\s+$", "", tweets.df$text)
+
+#str(tweets.df)
+
+write.csv(tweets.df,"infosys_Sql.csv")
+
+```
+
+Next step is to create corpus creation. But brfore proceeding to corpus creation we will see if there are any duplicate tweets by users and check for spam tweets.
+ 
+We'll see how many tweets are repeated and what kind of tweets are duplicated.
+##### Check for duplicate tweets.
+```{r message = FALSE, warning=FALSE}
+tweets.text = data.frame(tweets.df$text, tweets.df$screenName) 
+grouped_data <- aggregate(tweets.text, by=list(tweets.df$text, tweets.df$screenName), FUN=length);
+colnames(grouped_data) = c("Text","ScreenName","TweetCount_1","Tweet_Count_2")
+grouped_data = arrange(grouped_data, desc(TweetCount_1))
+head(subset(grouped_data, grouped_data$TweetCount_1 > 1))
+```
+
+We can see there are such duplicate tweets by same ScreenName. We don't want to include such tweets as it affects the strength of sentiment.
+
+For example, First tweet by "ossbss_ami_ucc" is repeated 34 times. If the tweet by that screen name has any keyword affecting the sentiment, it strengthens the senitment as the same keyword is repeated 34 times. But ideally it should be considered only once so that the sentiment won't be affected.
+
+To solve this duplicate tweets problem, we will consider unique tweets in the combination of Text and ScreenName.
+```{r message = FALSE, warning=FALSE}
+# Extract unique tweets in combination of Text and ScreenName
+tweets.df = data.table(tweets.df)
+tweets.df = unique(tweets.df, by = c("text","screenName"), fromLast=TRUE)
+
+nrow(tweets.df)
+```
+
+
+We can see the count reduced from 5000 tweets after extracting unique tweets.
+
+In the next step, we'll check for spam tweets. Spam tweets also affect the sentiment adding inappropriate strength.
+Generally these spam tweets be in large numbers. As it's not possible to go through all tweets, we'll check tweets with highest frequency and check for any spam. Along with that, we also check for spam keywords and analyze the tweets for spam.
+
+##### Check for spam tweets.
+```{r message = FALSE, warning=FALSE}
+tweets.text = data.frame(tweets.df$text) 
+grouped_data <- aggregate(tweets.text, by=list(tweets.df$text), FUN=length);
+colnames(grouped_data) = c("Text","TweetCount")
+grouped_data = arrange(grouped_data, desc(TweetCount))
+tweets.text.duplicate = subset(grouped_data, grouped_data$TweetCount > 1)
+
+head(tweets.text.duplicate, n = 20)
+
+tweets.text.duplicate[grep("stock|retweet|follow|update",tweets.text.duplicate$Text),]
+```
+
+Looks good. We didn't find any spam tweets atleast with high frequency which could affect the sentiment.
+So we'll continue with the next step of Corpus creation. We have 4757 tweets for corpus creation. It takes lot of time to create this huge corpus of size approx 17 MB. We thought of picking a random sample of 2000 but proceeded with entire data extracted. We'll proceed with the next step of Corpus creation.
+
+#### Step 4: Corpus Creation
+
+Generally, first step in corpus creation is to convert text in to lower case. We did not want to lose Entity words like US(United States), IT(Information Technology) and other related keywords. If we convert to lower case, those will be lost in one of the corpus transformation steps like stemming, removing stop words etc. 
+
+Apart from it, we almost done all basic corpus transformation steps required.
+1. Remove punctuations
+2. Remove Single Letter words
+3. Remove stop words
+4. Remove whitespaces
+4. Stemming and correction/completion of words after stemming using a copy of corpus as dictionary.
+   Generally this step of correcting the stemmed text takes long time. So it's better to save a copy of this corpus after correction before proceeding with next steps so that you have a backup incase of any issues and it saves time 
+
+```{r message = FALSE, warning=FALSE}
+#tweets.subset = tweets.df[sample(1:length(tweets.df$text),2000, replace = FALSE)]
+#str(tweets.subset)
+tweets.text = tweets.df$text
+ 
+# Create document corpus with tweet text
+myCorpus<- Corpus(VectorSource(tweets.text))
+
+## Converting to lower
+#myCorpus = tm_map(myCorpus, content_transformer(tolower))
+
+##Remove punctuations
+myCorpus = tm_map(myCorpus, removePunctuation)
+
+# removeNumPunct <- function(x) gsub("[^[:alpha:][:space:]]*", "", x)
+# myCorpus <- tm_map(myCorpus, content_transformer(removeNumPunct))
+
+# Remove Single letter words
+removeSingle <- function(x) gsub(" . ", " ", x)   
+myCorpus <- tm_map(myCorpus, content_transformer(removeSingle))
+
+##Remove Stopwords
+myCorpus = tm_map(myCorpus, removeWords, c(stopwords("english"),c('The', 'Rs', 'amp', 'In', 'it', 'will')))
+
+#Check for stopwords
+#myCorpusTidy = tidy(myCorpus)
+#grep("\\bs\\b",myCorpusTidy$text,value=TRUE) 
+
+##Remove whitespaces
+myCorpus = tm_map(myCorpus, stripWhitespace)
+
+# Keep a copy of "myCorpus" for stem completion later
+myCorpusCopy<- myCorpus
+
+# Stem words in the corpus 
+myCorpus<-tm_map(myCorpus, stemDocument)
+ 
+# Function to correct/complete the text after stemming
+stemCompletion2 <- function(x,dictionary) {
+  x <- unlist(strsplit(as.character(x)," "))
+  x <- x[x !=""]
+  x <- stemCompletion(x, dictionary = dictionary)
+  x <- paste(x, sep="", collapse=" ")
+  PlainTextDocument(stripWhitespace(x))
+}
+
+# Correction of stemmed words using backup corpus as dictionary.
+myCorpus <- lapply(myCorpus, stemCompletion2, dictionary=myCorpusCopy)
+beep(3)
+
+# Keeping copy of Corpus after stemming
+myCorpusAfterStemComplete = myCorpus
+
+# myCorpus = myCorpusAfterStemComplete
+myCorpus <- Corpus(VectorSource(myCorpus))
+
+#Check for stopwords
+#myCorpusTidy = tidy(myCorpus)
+ 
+```
+#### Step 5: Term Document Matrix and Word Cloud
+
+With corpus created, we'll move on to Term Document Matrix creation and create a Word Cloud. After observing the frequency of each word, we chose 150 as the minimum frequency to plot the word frequency plot. 
+
+To create word cloud, we chose 50 as minimum word frequency. But R gives a boring word cloud. To make it attractive, we saved the word and frequencies in csv file and created a word cloud in the form of twitter bird using online wordcloud creater. We've plotted both the versions.
+```{r message = FALSE, warning=FALSE}
+# Creating TermDocumentMatrix
+tdm <- TermDocumentMatrix(myCorpus, control= list(wordLengths= c(1, Inf)))
+# tdm
+
+#####Find the terms used most frequently
+freq.terms <- findFreqTerms(tdm, lowfreq = 50)
+term.freq <- rowSums(as.matrix(tdm))
+term.freq <- subset(term.freq, term.freq > 150)
+df <- data.frame(term = names(term.freq), freq= term.freq)
+
+ 
+# plotting the graph of frequent terms
+ggplot(df, aes(reorder(term, freq),freq)) + theme_bw() + geom_bar(stat = "identity")  + coord_flip() +labs(list(title="Term Frequency Chart", x="Terms", y="Term Counts")) + geom_text(aes(label=freq))
+
+
+# calculate the frequency of words and sort it by frequency and setting up the Wordcloud
+
+word.freq <-sort(rowSums(as.matrix(tdm)), decreasing= TRUE)
+write.csv(data.frame(word.freq),"wordFreq.csv")
+pal<- brewer.pal(8, "Dark2")
+wordcloud(words = names(word.freq), freq = word.freq, min.freq = 50, random.order = F, colors = pal, max.words = 2000)
+
+
+img <- readPNG("WordCloud.png", native = FALSE)
+rimg <- as.raster(img) # raster multilayer object
+r <- nrow(rimg) / ncol(rimg) # image ratio
+plot.new()
+rasterImage(rimg, 0, 0, 1, r) 
+
+```
+
+#### Step 6: Correlations and HeatMaps
+
+After looking at the word cloud we can see words like cut, revenue, tcs, us, it, brexit, ceo, result, coo, cfo, target, client, sikka, guidance, share, forecast have higher strength and hence highlighted in the wordcloud.
+
+We'll take these words and proceed next to identify correlations between them and other words in the tweets.
+```{r message = FALSE, warning=FALSE}
+#Function to create Word Correlation using the corpus.
+fn_getWordCorr = function(Corpus, cor_word, cor_strength)
+{
+  WordCorr = apply_as_df(Corpus[1:4000], word_cor, word = cor_word, r = cor_strength)
+}
+
+fn_plotWordCorr = function(wordCorr)
+{
+  plot(wordCorr)
+}
+
+fn_qheatWordCorr = function(wordCorr)
+{
+  qheat(vect2df(wordCorr[[1]], "word", "cor"), values=TRUE, high="red", digits=2, order.by ="cor", plot = FALSE) + coord_flip()
+}
+ 
+corrWords = c('cut', 'revenue', 'tcs', 'brexit')
+
+wordCorrs = lapply(corrWords, fn_getWordCorr, cor_strength = .25, Corpus = myCorpus)
+
+wordCorrs.plot = lapply(wordCorrs, fn_plotWordCorr)
+wordCorrs.qheat = lapply(wordCorrs, fn_qheatWordCorr)
+
+do.call("grid.arrange", c(wordCorrs.plot, ncol=2))
+do.call("grid.arrange", c(wordCorrs.qheat, ncol=2))
+
+# This is not an exhaustive list, we can do this for any set of words.
+
+ 
+```
+
+We'll try to draw some insights on the above correlations.
+
+First word is "cut". We'll see some tweets with this word.
+
+```{r message = FALSE, warning=FALSE}
+# Messages with word - cut
+df <- data.frame(text=sapply(myCorpus, `[[`, "content"), stringsAsFactors=FALSE)
+head(unique(df[grep("\\bcut\\b", df$text), ]), n=10)
+
+```
+
+We can see these tweets are mainly on guidance cut from Infosys due to low revenue growth. We can draw the same insight from the correlation plot that terms 'revenue' and 'cut' are highly correlated.  
+
+Similar insights can be drawn from the other words.
+
+
+#### Step 7: Association and Topic Modelling 
+
+Next step is to find associations with a specific kewyword in the tweets. We'll check the association for some the words we didn't use for Correlation.
+
+```{r message = FALSE, warning=FALSE}
+fn_wordAssociations = function(tdm, aterm)
+{
+  findAssocs(tdm, aterm, 0.2)
+}
+assocWords = c('coo', 'cfo', 'ceo', 'us')
+
+assocWords.association = lapply(assocWords, fn_wordAssociations, tdm = tdm)
+
+print(assocWords.association)
+
+```
+From associations we can see how words are associated in the tweets. For example, coo, cfo words are highly associated with the word 'salaries'. This is because lot of tweets are on the recent hike in salaries of COO and CFO of Infosys and other top executives. 
+
+Topic Modelling is to extract topics discussed from the set of words using the model LDA(Latent Dirichlet allocation).
+We'll extract top 5 topics discussed and top 7 words for each topic to draw insights on topic.
+
+```{r message = FALSE, warning=FALSE}
+# Topic Modelling to identify latent/hidden topics using LDA technique
+dtm <- as.DocumentTermMatrix(tdm)
+
+rowTotals <- apply(dtm , 1, sum)
+
+NullDocs <- dtm[rowTotals==0, ]
+dtm   <- dtm[rowTotals> 0, ]
+
+if (length(NullDocs$dimnames$Docs) > 0) {
+tweets.df <- tweets.df[-as.numeric(NullDocs$dimnames$Docs),]
+}
+
+lda <- LDA(dtm, k = 5) # find 5 topic
+term <- terms(lda, 7) # first 7 terms of every topic
+(term <- apply(term, MARGIN = 2, paste, collapse = ", "))
+
+topics<- topics(lda)
+topics<- data.frame(date=(tweets.df$created), topic = topics)
+qplot (date, ..count.., data=topics, geom ="density", fill= term[topic], position="stack")
+
+df <- data.frame(text=sapply(myCorpus, `[[`, "content"), stringsAsFactors=FALSE)
+df = data.frame(tolower(df$text))
+names(df) = c("text")
+
+df$text = as.character(df$text)
+head(unique(df[grep("\\bbank\\b | \\blower\\b | \\bicici\\b | \\bpartner\\b | \\bnbd\\ | \\bunit\\b | \\bemirates\\b", df$text), ]), n=20)
+```
+So, these are the top 5 topics discussed in the tweets. We can just search the corpus for these words and have a look to draw more insights.
+
+We can see topic 5 about the recent pilot carried out for using block chain network for international remittances and trade finance with ICICI Bank and Middle East - based Emirates NBD.
+
+Topic modelling plot shows you the topic accross dates.
+
+#### Step 8: Sentiment Analysis
+
+Sentiment Analysis is used to analyse the positivity and negativity of the text in a corpus.
+We'll detect sentiment and plot on tweets freq vs polarity, polarity vs date. 
+
+```{r message = FALSE, warning=FALSE}
+# Use qdap polarity function to detect sentiment
+sentiments <- polarity(tweets.df$text)
+ 
+sentiments.polarity <- data.frame(sentiments$all$polarity)
+
+sentiments.polarity[["polarity"]] <- cut(sentiments.polarity[[ "sentiments.all.polarity"]], c(-5,0.0,5), labels = c("negative","positive"))
+ 
+#head(sentiments.polarity) 
+#is.na(sentiments.polarity$polarity)
+
+sentiment.plot = sentiments.polarity[!is.na(sentiments.polarity$polarity)== TRUE,] 
+
+table(sentiment.plot$polarity) 
+#head(sentiment.plot)
+
+ggplot(sentiment.plot, aes(x = polarity))+
+  geom_bar(aes(y = ..count..,fill = polarity))+
+  scale_fill_brewer((palette = "Dark2"))+
+  labs(x = "Polarity Categories", y = "Number of Tweets",
+       title = "Classification based on Polarity")
+```
+We can see classification of tweets as negative and as positive in the above result pane. 
+
+We'll see how the sentiment played on different dates using the plot below. We scored the negative tweets as -1 and positive tweets as 1 and plotted the sum of these scores. 
+```{r message = FALSE, warning=FALSE}
+# Sentiment Plot by date
+
+sentiments.polarity$score<- 0
+sentiments.polarity$score[sentiments.polarity$polarity == "positive"]<- 1
+sentiments.polarity$score[sentiments.polarity$polarity == "negative"]<- -1
+sentiments.polarity$date <- as.IDate(tweets.df$created)
+result <- aggregate(score ~ date, data = sentiments.polarity, sum)
+plot(result, type = "l")
+
+```
+
+We can see high negative score on Friday which is 14th October which suggest that negative tweets dominated; may be because of lower than expected results declared on the same date. 
+
+#### Step 9: Stream Graph
+
+Final step is the stream graph an interactive graph on Polarity of tweets across different dates. In the above step we scored the tweets on polarity. Instead we can use this graph to plot area of polarity (no of tweets) vs dates. 
+
+##### StreamGraph
+```{r Type III,warning=FALSE, echo=FALSE}
+# Stream Graph for sentiment by date
+Data<-data.frame(sentiments.polarity$polarity)
+colnames(Data)[1] <- "polarity"
+Data$Date <- tweets.df$created
+Data$text <- NULL
+Data$Count <- 1
+
+graphdata <- aggregate(Count ~ polarity + as.character.Date(Date),data=Data,FUN=length)
+colnames(graphdata)[2] <- "Date"
+graphdata %>%
+streamgraph(polarity, Count, Date) %>%
+  sg_axis_x(20) %>%
+  sg_axis_x(1, "Date","%d-%b") %>%
+  sg_legend(show=TRUE, label="Polarity: ")
+
+```
+
+We got the same insight as in Step 8 that negative tweets dominated highly on 14th October. Even on the succeeding days, negative tweets dominated but not as high as on the first day. No. of tweets reduced on 15th, 16th and increased on 17th and 18th.
+
+ 
